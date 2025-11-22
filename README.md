@@ -1,46 +1,78 @@
-# Getting Started with Create React App
+# AI Guard Agent
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+**Authors:** V Sathvik (22B3946), Aman Moon (22B1216)
+**Date:** November 27, 2025
 
-## Available Scripts
+## Abstract
+This system details the architecture and implementation of an AI Guard Agent. The system integrates Automatic Speech Recognition (ASR), Facial Recognition, and Large Language Models (LLM) to create an interactive security monitor. The application operates via a multi-threaded Python backend, utilizing OpenAI's Whisper for audio transcription, Google's Gemma for conversational intelligence, and dlib-based models for biometric verification.
 
-In the project directory, you can run:
+## 1. Introduction
+The AI Guard Agent is a desktop-based security application designed to monitor an environment through audio-visual inputs. The system operates in two distinct states: a passive listening mode and an active "Guard Mode".
 
-### `npm start`
+* **Activation:** Upon activation via specific voice commands, the system employs computer vision to verify the identity of individuals in the frame.
+* **Response:** Unverified individuals trigger a defensive persona in the conversational agent, while verified users are greeted normally.
+* **Performance:** The implementation relies heavily on local inference using CUDA-accelerated PyTorch models to ensure low-latency performance.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+## 2. System Architecture
+The backend logic is implemented in Python, structured around concurrent execution to handle blocking I/O operations (audio recording and video capture) without freezing the main application loop. Inter-process communication and UI updates are managed via the **Eel library**, bridging the Python backend with the frontend interface.
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+The architecture consists of three primary worker threads:
+1.  **Audio Processor:** Handles raw PCM data capture, Voice Activity Detection (VAD), and Fast Fourier Transform (FFT) for visualization.
+2.  **Vision Engine:** Performs face detection and embedding comparison against a trusted database.
+3.  **Inference Engine:** Manages the LLM context and text-to-speech (TTS) synthesis.
 
-### `npm test`
+## 3. Audio Subsystem Implementation
+The audio processing logic prioritizes real-time visualization and command latency.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### 3.1 Signal Processing and Visualization
+The `RealTime AudioProcessor` captures audio at a sample rate of 16kHz. To drive the user interface visualization, raw audio chunks are decomposed into frequency bins ranging from 50Hz to 16kHz using Fast Fourier Transform (FFT).
 
-### `npm run build`
+The magnitude is calculated as:
+$$M_{band}=\frac{1}{N}\sum_{f=f_{min}}^{f_{max}}|FFT(x)|$$
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+To map these magnitudes to a visual scale, a logarithmic transformation is applied to approximate human loudness perception:
+`log_magnitudes = np.log1p(band_magnitudes)`
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### 3.2 Voice Activity Detection (VAD)
+To prevent processing ambient silence, the system implements dynamic VAD. A `calibrate` method samples ambient noise to establish a baseline amplitude. The silence threshold is set dynamically:
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+$$T_{silence} = \max(100, A_{ambient\_max} \times 1.2)$$
 
-### `npm run eject`
+Transmission to the recognition queue occurs only when the amplitude exceeds $T_{silence}$ for a sustained duration.
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+### 3.3 Command Recognition
+The system utilizes fuzzy string matching (fuzzywuzzy and jellyfish libraries) to handle variations in spoken commands. The matching algorithm combines token set ratio and phonetic matching (Metaphone algorithm).
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+$$combined\_score = (text\_score \times 0.4) + (phonetic\_score \times 0.6)$$
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+A strict threshold of 85% confidence is required to toggle the guard mode state.
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+## 4. Computer Vision Module
+Facial recognition operates on a strict producer-consumer model within a daemon thread to maintain video feed fluidity.
 
-## Learn More
+* **Enrollment:** The system utilizes the dlib HOG (Histogram of Oriented Gradients) face detector to generate 128-dimensional encodings for trusted faces.
+* **Verification:** The system calculates the Euclidean distance between the live face encoding ($E_{live}$) and trusted encodings ($E_{trusted}$). Verification is confirmed if:
+    $$||E_{live}-E_{trusted}|| < 0.6$$
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+To prevent false negatives from motion blur, the system implements temporal smoothing, waiting for a 10-second confirmation window before flagging a user as unauthorized.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+## 5. Generative AI Integration
+The conversational core is powered by Google's Gemma model (`google/gemma-3n-E4b-it`). To accommodate consumer hardware, the model is loaded with `torch.bfloat16` precision on CUDA devices to reduce VRAM usage.
+
+### Context-Aware Prompt Engineering
+The behavioral logic is controlled via dynamic prompt injection based on verification status:
+1.  **Verified State:** Instructions to behave as a helpful assistant.
+2.  **Unverified State (Guard Mode):** strictly engineered for security:
+    > "Instructions: You are a guard AI. An unverified user is trying to talk to you. Politely but firmly, tell them to please kindly leave the room."
+
+## 6. Integration and Control Flow
+The application flow follows a strict state machine:
+1.  **Idle:** Listens for "Activate" keyword.
+2.  **Active (Guard Mode):**
+    * Vision thread updates `is_verified` flag.
+    * Audio thread captures input.
+    * Whisper transcribes input.
+    * Gemma generates response based on context.
+    * Response is synthesized via `pyttsx3`.
+
+---
