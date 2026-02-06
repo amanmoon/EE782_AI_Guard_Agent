@@ -3,7 +3,8 @@
 **Course:** EE 726 - Advanced Machine Learning (IIT Bombay)  
 **Instructor:** Prof. Amit Sethi  
 **Authors:** V Sathvik, Aman Moon  
-**Status:** Active
+**Status:** Active \
+**[Demo Video Link](https://drive.google.com/file/d/19kbUmnauzn8cr-vKW8ckhwxL8zqijvJi/view?usp=sharing)** 
 
 ## 📋 Abstract
 
